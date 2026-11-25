@@ -4,6 +4,9 @@
 -- Sabit verilere (roller, kategoriler, renkler, konumlar) dokunmaz.
 -- =========================================================
 
+-- Toplu yüklemede otomatik eşleştirmeyi kapat (V5 trigger'ı bunu kontrol eder)
+SET app.skip_matching = 'on';
+
 -- 0) Önceki test verisini temizle
 TRUNCATE report_status_history, notifications, handovers, claims, matches,
          found_reports, lost_reports, item_photos, items, users
@@ -152,3 +155,6 @@ SELECT
     least(now(), b.t_found + b.delay)
 FROM base b
 CROSS JOIN ofis;
+
+-- Otomatik eşleştirmeyi tekrar aç
+RESET app.skip_matching;
