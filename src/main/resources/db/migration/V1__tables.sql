@@ -211,3 +211,143 @@ CREATE TABLE found_reports (
     CONSTRAINT chk_found_reports_status
         CHECK (status IN ('IN_STORAGE', 'CLAIM_PENDING', 'HANDED_OVER', 'DISPOSED'))
 );
+
+-- =========================================================
+-- Bölüm 4: Eşleşme, talep, teslim, bildirim, durum geçmişi
+-- =========================================================
+
+-- Sistemin bulduğu eşleşmeler (lost_reports N-N found_reports ara tablosu)
+CREATE TABLE matches (
+    match_id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    lost_report_id   BIGINT        NOT NULL,
+    found_report_id  BIGINT        NOT NULL,
+    score            NUMERIC(5, 2) NOT NULL,
+    score_detail     JSONB         NOT NULL DEFAULT '{}'::jsonb,
+    status           VARCHAR(20)   NOT NULL DEFAULT 'SUGGESTED',
+    created_at       TIMESTAMPTZ   NOT NULL DEFAULT now(),
+
+    CONSTRAINT fk_matches_lost
+        FOREIGN KEY (lost_report_id) REFERENCES lost_reports (lost_report_id),
+    CONSTRAINT fk_matches_found
+        FOREIGN KEY (found_report_id) REFERENCES found_reports (found_report_id),
+    CONSTRAINT uq_matches_pair UNIQUE (lost_report_id, found_report_id),
+    CONSTRAINT uq_matches_id_found UNIQUE (match_id, found_report_id),  -- bileşik FK hedefi
+    CONSTRAINT chk_matches_score  CHECK (score BETWEEN 0 AND 100),
+    CONSTRAINT chk_matches_detail CHECK (jsonb_typeof(score_detail) = 'object'),
+    CONSTRAINT chk_matches_status CHECK (status IN ('SUGGESTED', 'CONFIRMED', 'DISMISSED'))
+);
+
+-- Sahiplenme talepleri
+CREATE TABLE claims (
+    claim_id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    found_report_id   BIGINT      NOT NULL,
+    claimant_user_id  BIGINT      NOT NULL,
+    lost_report_id    BIGINT,                  -- kullanıcının kendi kayıp bildirimi (varsa)
+    match_id          BIGINT,                  -- talep bir eşleşmeden geldiyse
+    proof_text        TEXT        NOT NULL,    -- sahiplik kanıtı / gizli detay cevabı
+    status            VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    reviewed_by       BIGINT,                  -- talebi inceleyen personel
+    reviewed_at       TIMESTAMPTZ,
+    reject_reason     TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT fk_claims_found
+        FOREIGN KEY (found_report_id) REFERENCES found_reports (found_report_id),
+    CONSTRAINT fk_claims_claimant
+        FOREIGN KEY (claimant_user_id) REFERENCES users (user_id),
+    CONSTRAINT fk_claims_lost
+        FOREIGN KEY (lost_report_id) REFERENCES lost_reports (lost_report_id),
+    -- Eşleşme verildiyse aynı bulunan eşyaya ait olmalı
+    CONSTRAINT fk_claims_match_same_found
+        FOREIGN KEY (match_id, found_report_id) REFERENCES matches (match_id, found_report_id),
+    CONSTRAINT fk_claims_reviewer
+        FOREIGN KEY (reviewed_by) REFERENCES users (user_id),
+
+    CONSTRAINT uq_claims_one_per_user UNIQUE (found_report_id, claimant_user_id),
+    CONSTRAINT chk_claims_status
+        CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'CANCELLED')),
+    CONSTRAINT chk_claims_proof
+        CHECK (length(btrim(proof_text)) >= 10),
+    -- İnceleyen ve inceleme zamanı ya ikisi birden dolu ya ikisi birden boş
+    CONSTRAINT chk_claims_review_pair
+        CHECK ((reviewed_by IS NULL) = (reviewed_at IS NULL)),
+    -- Onaylanan/reddedilen talep incelenmiş olmalı; bekleyen/iptal olan incelenmemiş
+    CONSTRAINT chk_claims_reviewed
+        CHECK ((status IN ('APPROVED', 'REJECTED')) = (reviewed_by IS NOT NULL)),
+    CONSTRAINT chk_claims_reject_reason
+        CHECK (status <> 'REJECTED' OR btrim(coalesce(reject_reason, '')) <> ''),
+    CONSTRAINT chk_claims_not_self_review
+        CHECK (reviewed_by IS NULL OR reviewed_by <> claimant_user_id)
+);
+
+-- Bir eşya için en fazla bir onaylı talep
+CREATE UNIQUE INDEX uq_claims_one_approved
+    ON claims (found_report_id)
+    WHERE status = 'APPROVED';
+
+-- Teslim kayıtları (onaylı talep başına en fazla bir teslim)
+CREATE TABLE handovers (
+    handover_id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    claim_id             BIGINT      NOT NULL,
+    staff_user_id        BIGINT      NOT NULL,
+    handed_over_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    verification_method  VARCHAR(30) NOT NULL,
+    notes                TEXT,
+
+    CONSTRAINT fk_handovers_claim
+        FOREIGN KEY (claim_id) REFERENCES claims (claim_id),
+    CONSTRAINT fk_handovers_staff
+        FOREIGN KEY (staff_user_id) REFERENCES users (user_id),
+    CONSTRAINT uq_handovers_claim UNIQUE (claim_id),
+    CONSTRAINT chk_handovers_method
+        CHECK (verification_method IN ('ID_CARD', 'PROOF_OF_PURCHASE', 'SECRET_DETAILS', 'OTHER'))
+);
+
+-- Kullanıcı bildirimleri
+CREATE TABLE notifications (
+    notification_id  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id          BIGINT      NOT NULL,
+    type             VARCHAR(30) NOT NULL,
+    match_id         BIGINT,
+    claim_id         BIGINT,
+    message          TEXT        NOT NULL,
+    is_read          BOOLEAN     NOT NULL DEFAULT FALSE,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT fk_notifications_user
+        FOREIGN KEY (user_id) REFERENCES users (user_id),
+    CONSTRAINT fk_notifications_match
+        FOREIGN KEY (match_id) REFERENCES matches (match_id),
+    CONSTRAINT fk_notifications_claim
+        FOREIGN KEY (claim_id) REFERENCES claims (claim_id),
+    CONSTRAINT chk_notifications_type
+        CHECK (type IN ('MATCH_FOUND', 'CLAIM_APPROVED', 'CLAIM_REJECTED', 'READY_FOR_PICKUP')),
+    -- Bildirim türü, ilgili kaydı göstermeli
+    CONSTRAINT chk_notifications_reference
+        CHECK (
+            (type = 'MATCH_FOUND' AND match_id IS NOT NULL)
+            OR (type IN ('CLAIM_APPROVED', 'CLAIM_REJECTED', 'READY_FOR_PICKUP') AND claim_id IS NOT NULL)
+        )
+);
+
+-- Bildirimlerin durum geçmişi (6. aşamada trigger dolduracak)
+CREATE TABLE report_status_history (
+    history_id       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    lost_report_id   BIGINT,
+    found_report_id  BIGINT,
+    old_status       VARCHAR(20),              -- NULL = kayıt yeni oluşturuldu
+    new_status       VARCHAR(20) NOT NULL,
+    changed_by       BIGINT,
+    changed_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT fk_history_lost
+        FOREIGN KEY (lost_report_id) REFERENCES lost_reports (lost_report_id),
+    CONSTRAINT fk_history_found
+        FOREIGN KEY (found_report_id) REFERENCES found_reports (found_report_id),
+    CONSTRAINT fk_history_changed_by
+        FOREIGN KEY (changed_by) REFERENCES users (user_id),
+    CONSTRAINT chk_history_one_report
+        CHECK (num_nonnulls(lost_report_id, found_report_id) = 1),
+    CONSTRAINT chk_history_changed
+        CHECK (old_status IS DISTINCT FROM new_status)
+);
