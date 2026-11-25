@@ -1,2 +1,18 @@
-# Lost-And-Found-Managment
-Konum ve nitelik tabanlı kayıp eşya eşleştirme ve yönetim sistemi
+# Lost & Found – Kayıp Eşya Eşleştirme ve Yönetim Sistemi
+
+Veri Tabanı Yönetim Sistemleri dersi projesi.
+
+## Kurulum
+1. PostgreSQL 1X kur (herkes aynı ana sürüm).
+2. pgAdmin'de postgres kullanıcısıyla `scripts/create_database.sql` dosyasını çalıştır.
+3. Bağlantı: localhost:5432, veritabanı / kullanıcı / şifre: lostfound
+
+## Ekip
+- Veritabanı: İlayda Genç
+- Backend: ...
+- Frontend: ...
+
+## Kurallar
+- `main` dalına doğrudan push yok; her değişiklik Pull Request ile.
+- Branch adları: `db/...`, `be/...`, `fe/...`
+- `main`'e girmiş migration dosyası değiştirilmez, yeni dosya açılır.

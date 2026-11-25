@@ -1,0 +1,16 @@
+# Windows / macOS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Editörler
+.idea/
+*.iml
+.vscode/
+
+# Java / Maven (Kişi 2 için)
+target/
+
+# Gizli ayarlar ve yüklenen dosyalar
+.env
+uploads/
