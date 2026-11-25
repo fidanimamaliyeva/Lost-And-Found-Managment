@@ -3,7 +3,7 @@
 Veri Tabanı Yönetim Sistemleri dersi projesi.
 
 ## Kurulum
-1. PostgreSQL 1X kur (herkes aynı ana sürüm).
+1. PostgreSQL 18 kur (herkes aynı ana sürüm).
 2. pgAdmin'de postgres kullanıcısıyla `scripts/create_database.sql` dosyasını çalıştır (iki satırı ayrı ayrı).
 3. Uygulamayı başlat; Flyway tabloları kendisi oluşturur.
 4. (İsteğe bağlı) Test verisi: `src/main/resources/db/seed/seed.sql`, sonra `demo_pairs.sql`.
@@ -11,7 +11,7 @@ Veri Tabanı Yönetim Sistemleri dersi projesi.
 Ayrıntılar ve backend notları: [docs/database.md](docs/database.md)
 
 ## Ekip
-- Veritabanı: İlayda Genç
+- Veritabanı: Fidan Imamaliyeva
 - Backend: ...
 - Frontend: ...
 
