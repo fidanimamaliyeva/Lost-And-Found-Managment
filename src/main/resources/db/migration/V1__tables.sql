@@ -111,3 +111,103 @@ CREATE TABLE users (
 
 -- Büyük/küçük harf farkı gözetmeden e-posta tekilliği
 CREATE UNIQUE INDEX uq_users_email_lower ON users (lower(email));
+
+
+-- =========================================================
+-- Bölüm 3: Eşyalar ve bildirimler
+-- =========================================================
+
+-- Eşyanın özellikleri (kayıp ve bulunan kayıtlar için ortak)
+CREATE TABLE items (
+    item_id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    kind            VARCHAR(5)   NOT NULL,          -- 'LOST' ya da 'FOUND'
+    category_id     INTEGER      NOT NULL,
+    color_id        INTEGER,                        -- NULL = renk bilinmiyor
+    brand           VARCHAR(60),                    -- NULL = marka bilinmiyor
+    title           VARCHAR(120) NOT NULL,          -- örn. "Siyah Samsung telefon"
+    description     TEXT,                           -- herkese açık açıklama
+    secret_details  TEXT,                           -- sadece personelin göreceği gizli detay
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+
+    CONSTRAINT fk_items_category
+        FOREIGN KEY (category_id) REFERENCES categories (category_id),
+    CONSTRAINT fk_items_color
+        FOREIGN KEY (color_id) REFERENCES colors (color_id),
+    CONSTRAINT uq_items_id_kind UNIQUE (item_id, kind),   -- bileşik FK hedefi
+    CONSTRAINT chk_items_kind   CHECK (kind IN ('LOST', 'FOUND')),
+    CONSTRAINT chk_items_title  CHECK (btrim(title) <> ''),
+    CONSTRAINT chk_items_brand  CHECK (brand IS NULL OR btrim(brand) <> '')
+);
+
+-- Eşya fotoğrafları (dosya diskte, burada sadece yolu)
+CREATE TABLE item_photos (
+    photo_id     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    item_id      BIGINT       NOT NULL,
+    file_path    VARCHAR(300) NOT NULL,
+    uploaded_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+
+    CONSTRAINT fk_item_photos_item
+        FOREIGN KEY (item_id) REFERENCES items (item_id) ON DELETE CASCADE,
+    CONSTRAINT uq_item_photos_path UNIQUE (file_path),
+    CONSTRAINT chk_item_photos_ext CHECK (file_path ~* '\.(jpg|jpeg|png)$')
+);
+
+-- Kayıp bildirimleri
+CREATE TABLE lost_reports (
+    lost_report_id  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    item_id         BIGINT      NOT NULL,
+    item_kind       VARCHAR(5)  NOT NULL DEFAULT 'LOST',
+    user_id         BIGINT      NOT NULL,
+    location_id     INTEGER     NOT NULL,
+    lost_from       TIMESTAMPTZ NOT NULL,   -- "en erken şu saatte kaybolmuş olabilir"
+    lost_to         TIMESTAMPTZ NOT NULL,   -- "en geç şu saatte fark ettim"
+    status          VARCHAR(20) NOT NULL DEFAULT 'OPEN',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT uq_lost_reports_item UNIQUE (item_id),              -- 1 eşya = 1 bildirim
+    CONSTRAINT chk_lost_reports_item_kind CHECK (item_kind = 'LOST'),
+    CONSTRAINT fk_lost_reports_item_kind
+        FOREIGN KEY (item_id, item_kind) REFERENCES items (item_id, kind),
+    CONSTRAINT fk_lost_reports_user
+        FOREIGN KEY (user_id) REFERENCES users (user_id),
+    CONSTRAINT fk_lost_reports_location
+        FOREIGN KEY (location_id) REFERENCES locations (location_id),
+    CONSTRAINT chk_lost_reports_range
+        CHECK (lost_from <= lost_to),
+    CONSTRAINT chk_lost_reports_max_range
+        CHECK (lost_to - lost_from <= INTERVAL '30 days'),
+    CONSTRAINT chk_lost_reports_not_future            -- 5 dk saat farkı toleransı
+        CHECK (lost_to <= created_at + INTERVAL '5 minutes'),
+    CONSTRAINT chk_lost_reports_status
+        CHECK (status IN ('OPEN', 'RESOLVED', 'CANCELLED', 'EXPIRED'))
+);
+
+-- Bulunan eşya bildirimleri
+CREATE TABLE found_reports (
+    found_report_id      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    item_id              BIGINT      NOT NULL,
+    item_kind            VARCHAR(5)  NOT NULL DEFAULT 'FOUND',
+    finder_user_id       BIGINT      NOT NULL,
+    location_id          INTEGER     NOT NULL,   -- bulunduğu yer
+    storage_location_id  INTEGER,                -- emanette durduğu yer
+    found_at             TIMESTAMPTZ NOT NULL,
+    status               VARCHAR(20) NOT NULL DEFAULT 'IN_STORAGE',
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    CONSTRAINT uq_found_reports_item UNIQUE (item_id),
+    CONSTRAINT chk_found_reports_item_kind CHECK (item_kind = 'FOUND'),
+    CONSTRAINT fk_found_reports_item_kind
+        FOREIGN KEY (item_id, item_kind) REFERENCES items (item_id, kind),
+    CONSTRAINT fk_found_reports_finder
+        FOREIGN KEY (finder_user_id) REFERENCES users (user_id),
+    CONSTRAINT fk_found_reports_location
+        FOREIGN KEY (location_id) REFERENCES locations (location_id),
+    CONSTRAINT fk_found_reports_storage
+        FOREIGN KEY (storage_location_id) REFERENCES locations (location_id),
+    CONSTRAINT chk_found_reports_not_future
+        CHECK (found_at <= created_at + INTERVAL '5 minutes'),
+    CONSTRAINT chk_found_reports_status
+        CHECK (status IN ('IN_STORAGE', 'CLAIM_PENDING', 'HANDED_OVER', 'DISPOSED'))
+);
